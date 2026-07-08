@@ -75,17 +75,6 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
-// TEMPORARY diagnostic instrumentation: checkpoint() writes progress into the
-// same Blobs record the frontend already polls, so we can see exactly where
-// a stuck invocation stalls without depending on Netlify's log pipeline
-// (which has not been showing any console output for this function at all).
-// Remove once the hang investigation is closed out.
-async function checkpoint(store, jobId, stage) {
-  try {
-    await store.setJSON(jobId, { status: 'pending', stage, at: Date.now() });
-  } catch (e) {}
-}
-
 exports.handler = async (event) => {
   const store = getStore({ name: 'hiring-screener', ...BLOBS_CONFIG });
   let jobId = null;
@@ -96,7 +85,6 @@ exports.handler = async (event) => {
     if (!jobId) return;
 
     await store.setJSON(jobId, { status: 'pending' });
-    await checkpoint(store, jobId, 'wrote-initial-pending');
 
     const jdInput = body.jd || {};
     const resumeInput = body.resume || {};
@@ -112,7 +100,6 @@ exports.handler = async (event) => {
     } catch (e) {
       countSoFar = 0;
     }
-    await checkpoint(store, jobId, 'rate-limit-checked');
     if (countSoFar >= DAILY_CAP) {
       await store.setJSON(jobId, { status: 'error', message: "Today's free screening limit has been reached. Come back tomorrow." });
       return;
@@ -127,26 +114,21 @@ exports.handler = async (event) => {
       await store.setJSON(jobId, { status: 'error', message: e.message });
       return;
     }
-    await checkpoint(store, jobId, 'document-text-resolved');
 
     jdText = jdText.slice(0, MAX_DOC_CHARS);
     resumeText = resumeText.slice(0, MAX_DOC_CHARS);
 
     // --- STAGE A: real embedding-based measurement, no AI involved ---
     const extractor = await getExtractor();
-    await checkpoint(store, jobId, 'extractor-loaded');
     const [jdVec, resumeVec] = await Promise.all([
       embed(extractor, jdText),
       embed(extractor, resumeText)
     ]);
-    await checkpoint(store, jobId, 'embeddings-computed');
     const similarity = cosineSimilarity(jdVec, resumeVec);
     const scorePercent = Math.round(Math.max(0, Math.min(1, similarity)) * 100);
 
     // --- STAGE B: one Claude call, judgment only, score is a fixed input ---
-    await checkpoint(store, jobId, 'stage-b-starting');
     const stageB = await runStageB(scorePercent, jdText, resumeText);
-    await checkpoint(store, jobId, 'stage-b-done');
 
     await limitStore.set(counterKey, String(countSoFar + 1));
 
@@ -163,9 +145,7 @@ exports.handler = async (event) => {
     console.error('generate-screening error:', err);
     if (jobId) {
       try {
-        // TEMPORARY: surfacing err.message for the hang investigation instead
-        // of the generic user-facing string. Revert once root-caused.
-        await store.setJSON(jobId, { status: 'error', message: 'Screening failed: ' + (err && err.message ? err.message : String(err)) });
+        await store.setJSON(jobId, { status: 'error', message: 'Screening failed. Try again in a minute.' });
       } catch (e) {}
     }
   }
