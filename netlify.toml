@@ -1,7 +1,9 @@
 [build]
+  command = "npm run download-model"
   publish = "."
   functions = "netlify/functions"
 
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["@huggingface/transformers", "onnxruntime-node", "sharp"]
+  included_files = ["netlify/functions/models/**"]

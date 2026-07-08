@@ -18,6 +18,7 @@ const { getStore } = require('@netlify/blobs');
 const { pipeline, env } = require('@huggingface/transformers');
 const { extractText, getDocumentProxy } = require('unpdf');
 const mammoth = require('mammoth');
+const path = require('node:path');
 
 // getStore MUST receive explicit siteID and token in this account's setup,
 // or it throws "The environment has not been configured to use Netlify Blobs".
@@ -26,23 +27,52 @@ const BLOBS_CONFIG = {
   token: process.env.NETLIFY_BLOBS_TOKEN
 };
 
-// Lambda's filesystem is read-only except /tmp. The model weights (~90MB)
-// download from the Hugging Face CDN on first use per container and are
-// cached here so a warm container reuses them across invocations.
-env.cacheDir = '/tmp/.cache/huggingface';
-env.allowLocalModels = false;
+// Model weights are downloaded once at BUILD time (scripts/download-model.mjs)
+// and shipped inside the function bundle at ./models (see netlify.toml
+// included_files). Loading only from that local path avoids the runtime fetch
+// to the Hugging Face CDN, whose unbounded hang on a slow/blocked connection
+// was why screenings got stuck at "pending" forever in production.
+// allowRemoteModels=false turns a missing bundled model into an immediate,
+// catchable error instead of a silent network hang. useFSCache is off because
+// there is nothing to cache, the model is already local and Lambda's
+// filesystem is read-only outside /tmp anyway.
+env.localModelPath = path.join(__dirname, 'models');
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
+env.useFSCache = false;
+env.useBrowserCache = false;
 
 const DAILY_CAP = 40;
 const MAX_DOC_CHARS = 30000;
 const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5MB
 const MIN_EXTRACTED_CHARS = 50; // below this, treat as "no extractable text"
 
+const MODEL_LOAD_TIMEOUT_MS = 45000;
+
 let extractorPromise = null;
 function getExtractor() {
   if (!extractorPromise) {
-    extractorPromise = pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+    // Defense in depth: the model is bundled locally now (see env config
+    // above), so this should resolve in milliseconds. The timeout race just
+    // means a future regression fails loud within 45s instead of hanging the
+    // job at "pending" forever, same failure mode this fix eliminates.
+    extractorPromise = withTimeout(
+      pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'q8' }),
+      MODEL_LOAD_TIMEOUT_MS,
+      'Model load timed out after 45s'
+    ).catch((err) => {
+      extractorPromise = null; // don't poison the warm container permanently
+      throw err;
+    });
   }
   return extractorPromise;
+}
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
+  ]);
 }
 
 exports.handler = async (event) => {
