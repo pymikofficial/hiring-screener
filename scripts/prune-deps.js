@@ -33,6 +33,11 @@ for (const p of ALL_PLATFORMS) {
   }
 }
 
+// Each platform dir also ships both x64 and arm64 binaries (again, not split
+// via optionalDependencies). Netlify Functions run on x86_64 Lambda, so drop
+// arm64 for whichever platform dir we kept above.
+rm(`node_modules/onnxruntime-node/bin/napi-v3/${process.platform}/arm64`);
+
 rm('node_modules/onnxruntime-web');
 
 const distDir = path.join(ROOT, 'node_modules/@huggingface/transformers/dist');
