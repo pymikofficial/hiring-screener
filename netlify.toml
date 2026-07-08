@@ -6,4 +6,14 @@
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["@huggingface/transformers", "onnxruntime-node", "sharp"]
-  included_files = ["netlify/functions/models/**"]
+  # external_node_modules alone was not reliably copying these native-binary
+  # packages' raw node_modules folders into the deployed bundle (confirmed:
+  # require('@huggingface/transformers') threw "Cannot find module" at
+  # runtime, well after external_node_modules said to keep it external).
+  # included_files is a second, verified-working copy mechanism (it's what
+  # ships the bundled model weights below) used here as a reliable fallback.
+  included_files = [
+    "netlify/functions/models/**",
+    "node_modules/@huggingface/transformers/**",
+    "node_modules/onnxruntime-node/**"
+  ]
