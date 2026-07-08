@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Paste a job description and a resume, get a real transformer-embedding fit score (not keyword overlap) plus AI-generated strengths, gaps, and targeted interview questions. Built by Soumik Chatterjee / cosmik.work.",
   "private": true,
+  "scripts": {
+    "postinstall": "node scripts/prune-deps.js"
+  },
   "dependencies": {
     "@netlify/blobs": "^8.1.0",
     "@huggingface/transformers": "^3.5.1",
