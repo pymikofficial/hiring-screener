@@ -40,6 +40,15 @@ The background function sends Claude the already-computed score, the JD text, an
 - **Daily rate limit**: 40 screenings/day, Blobs-backed counter.
 - **Cold start**: model weights (~90MB) download from the Hugging Face CDN into `/tmp` on first invocation per container. This is fine inside a background function (no 10s ceiling), so the frontend polls for up to 3 minutes instead of the ~90s used by lighter tools.
 
+### The deploy problem nobody warns you about: onnxruntime-node's real size
+
+The local proof (model loads, embeds, scores sensibly) was necessary but not sufficient. Deploying hit a second, unrelated risk: Netlify caps a function bundle at 250MB, and `onnxruntime-node` (the native backend transformers.js uses in Node) blew through that by a wide margin, for reasons invisible from a Windows/Mac dev machine:
+
+- It ships win32, linux, *and* darwin native binaries inside one package rather than splitting them via `optionalDependencies` like most native modules do, so `npm install` on any OS pulls in every platform's binary.
+- Its own `postinstall` script additionally downloads a CUDA execution-provider library **on Linux only**, at 327MB, more than the entire 250MB cap by itself, for GPU acceleration this CPU-only text-embedding tool never uses.
+
+Neither of these showed up in local testing on Windows. A `postinstall` script (`scripts/prune-deps.js`) now trims the installed tree after every `npm install`, platform- and arch-aware (keeps whatever the current machine needs, so local dev on any OS still works): drops the other platforms' binaries, drops the arm64 build (Netlify Functions run on x86_64), drops the CUDA/TensorRT libraries, drops the unused `onnxruntime-web` (browser/WASM) package entirely, and trims `@huggingface/transformers`'s dist folder down to the one file actually `require()`'d. Diagnosed by streaming Netlify's real build logs (`netlify logs --source deploy`) rather than guessing, since the generic top-level error Netlify reports for this class of failure doesn't say which file is the problem.
+
 ## Environment variables
 
 | Variable | What it is |

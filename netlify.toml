@@ -1,7 +1,6 @@
 [build]
   publish = "."
   functions = "netlify/functions"
-  command = "echo DIAG_START && du -sh node_modules node_modules/onnxruntime-node node_modules/@huggingface/transformers node_modules/sharp node_modules/onnxruntime-common 2>&1; find node_modules/onnxruntime-node/bin -type f -exec du -h {} \\; 2>&1; echo DIAG_END"
 
 [functions]
   node_bundler = "esbuild"
