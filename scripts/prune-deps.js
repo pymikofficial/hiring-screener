@@ -38,6 +38,16 @@ for (const p of ALL_PLATFORMS) {
 // arm64 for whichever platform dir we kept above.
 rm(`node_modules/onnxruntime-node/bin/napi-v3/${process.platform}/arm64`);
 
+// GPU execution provider libraries, fetched by onnxruntime-node's own
+// postinstall script (node ./script/install) on Linux specifically, invisible
+// when developing on Windows/Mac. libonnxruntime_providers_cuda.so alone is
+// ~327MB. We only ever run the default CPU provider (a small model doing text
+// embeddings has no use for a GPU here), and onnxruntime-node loads these
+// lazily only if a caller explicitly requests that execution provider, so
+// removing them is safe.
+rm(`node_modules/onnxruntime-node/bin/napi-v3/${process.platform}/x64/libonnxruntime_providers_cuda.so`);
+rm(`node_modules/onnxruntime-node/bin/napi-v3/${process.platform}/x64/libonnxruntime_providers_tensorrt.so`);
+
 rm('node_modules/onnxruntime-web');
 
 const distDir = path.join(ROOT, 'node_modules/@huggingface/transformers/dist');
