@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hiring Screener | cosmik.work</title>
 <meta name="description" content="Real transformer-embedding fit scoring for job description vs resume, not keyword matching. Plus AI-generated strengths, gaps, and targeted interview questions.">
+<link rel="canonical" href="https://hiring-screener.netlify.app/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Hiring Screener | cosmik.work">
+<meta property="og:description" content="Real transformer-embedding fit scoring for job description vs resume, not keyword matching. Plus AI-generated strengths, gaps, and targeted interview questions.">
+<meta property="og:url" content="https://hiring-screener.netlify.app/">
+<meta property="og:image" content="https://cosmik.work/img/cosmikwork_broad_logo.webp">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Hiring Screener | cosmik.work">
+<meta name="twitter:description" content="Real transformer-embedding fit scoring for job description vs resume, not keyword matching. Plus AI-generated strengths, gaps, and targeted interview questions.">
+<meta name="twitter:image" content="https://cosmik.work/img/cosmikwork_broad_logo.webp">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=Inter+Tight:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -149,6 +159,9 @@ textarea:disabled{opacity:.4;}
   margin-top:32px;flex-wrap:wrap;
 }
 .privacy-note{font-size:.82rem;color:var(--text-2);max-width:54ch;}
+.char-count{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--text-2);text-align:right;margin-top:6px;}
+.char-count.warn{color:var(--warn);}
+.char-count.over{color:var(--rec);}
 .privacy-note strong{color:var(--accent-bright);font-weight:500;}
 button.generate{
   font-family:'Inter Tight',sans-serif;font-size:.95rem;font-weight:500;
@@ -240,11 +253,19 @@ footer a{color:var(--accent-bright);text-decoration:none;}
 footer a:hover{text-decoration:underline;}
 
 :focus-visible{outline:2px solid var(--accent-bright);outline-offset:2px;}
+.skip-link{
+  position:absolute;left:-9999px;top:0;z-index:100;
+  background:var(--accent);color:#fff;padding:12px 20px;border-radius:0 0 10px 0;
+  font-family:'JetBrains Mono',monospace;font-size:12px;text-decoration:none;
+}
+.skip-link:focus{left:0;}
 </style>
 </head>
 <body>
 
-<main>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<main id="main">
   <p class="eyebrow">cosmik.work · 10 ~ Hiring</p>
   <h1>An honest fit score, <em>measured</em> not guessed.</h1>
   <p class="sub">This tool embeds the job description and the resume with a real sentence-transformer model and compares the vectors, before any AI is allowed to opine. The fit number is math. What it means for you is judgment, from one Claude call that sees the score, not the other way around.</p>
@@ -293,7 +314,8 @@ footer a:hover{text-decoration:underline;}
     <div class="doc-grid">
       <div class="doc-block">
         <label class="field-label" for="jdText">Job description</label>
-        <textarea id="jdText" placeholder="Paste the full job description here..."></textarea>
+        <textarea id="jdText" maxlength="30000" placeholder="Paste the full job description here..."></textarea>
+        <p class="char-count" id="jdTextCount" aria-live="polite">0 / 30000</p>
         <div class="upload-row">
           <label class="file-btn" for="jdFile">Upload .pdf or .docx</label>
           <input type="file" id="jdFile" accept=".pdf,.docx" style="display:none;">
@@ -302,7 +324,8 @@ footer a:hover{text-decoration:underline;}
       </div>
       <div class="doc-block">
         <label class="field-label" for="resumeText">Resume</label>
-        <textarea id="resumeText" placeholder="Paste the full resume text here..."></textarea>
+        <textarea id="resumeText" maxlength="30000" placeholder="Paste the full resume text here..."></textarea>
+        <p class="char-count" id="resumeTextCount" aria-live="polite">0 / 30000</p>
         <div class="upload-row">
           <label class="file-btn" for="resumeFile">Upload .pdf or .docx</label>
           <input type="file" id="resumeFile" accept=".pdf,.docx" style="display:none;">
@@ -359,6 +382,18 @@ footer a:hover{text-decoration:underline;}
   const go = document.getElementById('go');
   const jdTextEl = document.getElementById('jdText');
   const resumeTextEl = document.getElementById('resumeText');
+  const jdTextCount = document.getElementById('jdTextCount');
+  const resumeTextCount = document.getElementById('resumeTextCount');
+  jdTextEl.addEventListener('input', () => {
+    const n = jdTextEl.value.length;
+    jdTextCount.textContent = n + ' / 30000';
+    jdTextCount.className = 'char-count' + (n >= 30000 ? ' over' : n >= 27000 ? ' warn' : '');
+  });
+  resumeTextEl.addEventListener('input', () => {
+    const n = resumeTextEl.value.length;
+    resumeTextCount.textContent = n + ' / 30000';
+    resumeTextCount.className = 'char-count' + (n >= 30000 ? ' over' : n >= 27000 ? ' warn' : '');
+  });
   const statusEl = document.getElementById('status');
   const statusText = document.getElementById('statusText');
   const resultsEl = document.getElementById('results');
@@ -424,7 +459,12 @@ footer a:hover{text-decoration:underline;}
       const t = b.textContent;
       b.textContent = 'Copied ✓';
       setTimeout(() => { b.textContent = t; }, 1500);
-    } catch (e) {}
+    } catch (e) {
+      const b = document.getElementById('copyBtn');
+      const t = b.textContent;
+      b.textContent = 'Copy failed — select the text manually';
+      setTimeout(() => { b.textContent = t; }, 2500);
+    }
   });
 
   async function start(){
