@@ -43,6 +43,7 @@ env.useFSCache = false;
 env.useBrowserCache = false;
 
 const DAILY_CAP = 40;
+const DAILY_CAP_PER_IP = 10;
 const MAX_DOC_CHARS = 30000;
 const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5MB
 const MIN_EXTRACTED_CHARS = 50; // below this, treat as "no extractable text"
@@ -75,6 +76,47 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
+function clientIp(event) {
+  return (event.headers['x-nf-client-connection-ip'] || event.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
+}
+
+// Netlify Blobs has no conditional/compare-and-swap write, so a true atomic
+// increment isn't possible here. This narrows (does not eliminate) the race
+// window between the check and the write.
+async function checkAndBumpUsage(limitStore, key, cap) {
+  const read = async () => {
+    try {
+      const existing = await limitStore.get(key);
+      return existing ? parseInt(existing, 10) : 0;
+    } catch (e) {
+      return 0;
+    }
+  };
+
+  if ((await read()) >= cap) return false;
+
+  await new Promise((resolve) => setTimeout(resolve, Math.floor(Math.random() * 120)));
+
+  const count = await read();
+  if (count >= cap) return false;
+
+  await limitStore.set(key, String(count + 1));
+  return true;
+}
+
+// Best-effort refund of a reserved slot when the screening fails after the
+// slot was already reserved, so a failed attempt doesn't cost the caller
+// (or the shared daily budget) real quota.
+async function refundUsage(limitStore, key) {
+  try {
+    const existing = await limitStore.get(key);
+    const count = existing ? parseInt(existing, 10) : 0;
+    if (count > 0) await limitStore.set(key, String(count - 1));
+  } catch (e) {
+    // Nothing sensible to do if the refund itself fails; not worth failing the request over.
+  }
+}
+
 exports.handler = async (event) => {
   const store = getStore({ name: 'hiring-screener', ...BLOBS_CONFIG });
   let jobId = null;
@@ -89,58 +131,69 @@ exports.handler = async (event) => {
     const jdInput = body.jd || {};
     const resumeInput = body.resume || {};
 
-    // --- Daily rate limit ---
+    // --- Daily rate limit, global and per-IP. The slot is reserved (bumped)
+    // up front rather than checked-then-bumped-later, and refunded if
+    // anything below fails, so a failed screening doesn't burn quota while
+    // still keeping the check-to-write window as tight as possible. ---
     const today = new Date().toISOString().slice(0, 10);
     const limitStore = getStore({ name: 'rate-limits', ...BLOBS_CONFIG });
     const counterKey = `screening-${today}`;
-    let countSoFar = 0;
-    try {
-      const existing = await limitStore.get(counterKey);
-      countSoFar = existing ? parseInt(existing, 10) : 0;
-    } catch (e) {
-      countSoFar = 0;
-    }
-    if (countSoFar >= DAILY_CAP) {
+    const ipCounterKey = `screening-${today}-ip-${clientIp(event)}`;
+
+    const globalReserved = await checkAndBumpUsage(limitStore, counterKey, DAILY_CAP);
+    if (!globalReserved) {
       await store.setJSON(jobId, { status: 'error', message: "Today's free screening limit has been reached. Come back tomorrow." });
       return;
     }
-
-    // --- Resolve document text (paste or server-side file extraction) ---
-    let jdText, resumeText;
-    try {
-      jdText = await resolveDocumentText(jdInput, 'Job description');
-      resumeText = await resolveDocumentText(resumeInput, 'Resume');
-    } catch (e) {
-      await store.setJSON(jobId, { status: 'error', message: e.message });
+    const ipReserved = await checkAndBumpUsage(limitStore, ipCounterKey, DAILY_CAP_PER_IP);
+    if (!ipReserved) {
+      await refundUsage(limitStore, counterKey);
+      await store.setJSON(jobId, { status: 'error', message: "You've hit today's per-user screening limit. Come back tomorrow." });
       return;
     }
 
-    jdText = jdText.slice(0, MAX_DOC_CHARS);
-    resumeText = resumeText.slice(0, MAX_DOC_CHARS);
+    try {
+      // --- Resolve document text (paste or server-side file extraction) ---
+      let jdText, resumeText;
+      try {
+        jdText = await resolveDocumentText(jdInput, 'Job description');
+        resumeText = await resolveDocumentText(resumeInput, 'Resume');
+      } catch (e) {
+        await store.setJSON(jobId, { status: 'error', message: e.message });
+        await refundUsage(limitStore, counterKey);
+        await refundUsage(limitStore, ipCounterKey);
+        return;
+      }
 
-    // --- STAGE A: real embedding-based measurement, no AI involved ---
-    const extractor = await getExtractor();
-    const [jdVec, resumeVec] = await Promise.all([
-      embed(extractor, jdText),
-      embed(extractor, resumeText)
-    ]);
-    const similarity = cosineSimilarity(jdVec, resumeVec);
-    const scorePercent = Math.round(Math.max(0, Math.min(1, similarity)) * 100);
+      jdText = jdText.slice(0, MAX_DOC_CHARS);
+      resumeText = resumeText.slice(0, MAX_DOC_CHARS);
 
-    // --- STAGE B: one Claude call, judgment only, score is a fixed input ---
-    const stageB = await runStageB(scorePercent, jdText, resumeText);
+      // --- STAGE A: real embedding-based measurement, no AI involved ---
+      const extractor = await getExtractor();
+      const [jdVec, resumeVec] = await Promise.all([
+        embed(extractor, jdText),
+        embed(extractor, resumeText)
+      ]);
+      const similarity = cosineSimilarity(jdVec, resumeVec);
+      const scorePercent = Math.round(Math.max(0, Math.min(1, similarity)) * 100);
 
-    await limitStore.set(counterKey, String(countSoFar + 1));
+      // --- STAGE B: one Claude call, judgment only, score is a fixed input ---
+      const stageB = await runStageB(scorePercent, jdText, resumeText);
 
-    await store.setJSON(jobId, {
-      status: 'done',
-      score: scorePercent,
-      band: bandFor(scorePercent),
-      interpretation: stageB.interpretation,
-      strengths: stageB.strengths,
-      gaps: stageB.gaps,
-      questions: stageB.questions
-    });
+      await store.setJSON(jobId, {
+        status: 'done',
+        score: scorePercent,
+        band: bandFor(scorePercent),
+        interpretation: stageB.interpretation,
+        strengths: stageB.strengths,
+        gaps: stageB.gaps,
+        questions: stageB.questions
+      });
+    } catch (err) {
+      await refundUsage(limitStore, counterKey);
+      await refundUsage(limitStore, ipCounterKey);
+      throw err;
+    }
   } catch (err) {
     console.error('generate-screening error:', err);
     if (jobId) {
