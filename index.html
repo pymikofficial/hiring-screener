@@ -118,7 +118,7 @@ textarea{
   transition:border-color .3s var(--ease);
 }
 textarea:focus{border-color:rgba(167,139,250,.5);}
-textarea::placeholder{color:#55555f;}
+textarea::placeholder{color:#83838f;}
 textarea:disabled{opacity:.4;}
 
 .upload-row{
@@ -201,12 +201,12 @@ button.generate:disabled{background:#3a3550;cursor:not-allowed;transform:none;}
   background:linear-gradient(180deg,var(--card) 0%,var(--card-2) 100%);
   border:1px solid var(--line);border-radius:20px;padding:26px;margin-bottom:18px;
 }
-.result-section h3{
+.result-section h2{
   font-family:'Fraunces',serif;font-size:1.15rem;font-weight:500;letter-spacing:-.01em;
   margin-bottom:14px;
 }
-.result-section.strengths h3{color:var(--ok);}
-.result-section.gaps h3{color:var(--rec);}
+.result-section.strengths h2{color:var(--ok);}
+.result-section.gaps h2{color:var(--rec);}
 .result-section.questions h3{color:var(--accent-bright);}
 .result-section ul{list-style:none;display:flex;flex-direction:column;gap:10px;}
 .result-section li{
@@ -331,15 +331,15 @@ footer a:hover{text-decoration:underline;}
     </div>
 
     <div class="result-section strengths">
-      <h3>Strengths</h3>
+      <h2>Strengths</h2>
       <ul id="strengthsList"></ul>
     </div>
     <div class="result-section gaps">
-      <h3>Gaps</h3>
+      <h2>Gaps</h2>
       <ul id="gapsList"></ul>
     </div>
     <div class="result-section questions">
-      <h3>Interview questions</h3>
+      <h2>Interview questions</h2>
       <ul id="questionsList"></ul>
     </div>
 
@@ -383,7 +383,7 @@ footer a:hover{text-decoration:underline;}
       const file = fileEl.files[0];
       if (!file) return;
       if (file.size > 5 * 1024 * 1024) {
-        alert('File is too large (max 5MB).');
+        setStatus('File is too large (max 5MB).', true);
         fileEl.value = '';
         return;
       }
